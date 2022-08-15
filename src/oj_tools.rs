@@ -4,6 +4,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use config::Config;
+use owo_colors::OwoColorize;
 use run_script::ScriptOptions;
 
 use crate::{Action, HelperCli};
@@ -37,7 +38,6 @@ impl OJTools {
     }
 
     pub fn run(&self) {
-        println!("{:?}", self.config);
         match &self.args.action {
             Action::Test => { self.run_test() }
             Action::Run { filename, .. } => {
@@ -67,14 +67,17 @@ impl OJTools {
         let options = ScriptOptions::new();
         let args = vec![];
 
-        println!("Running script...");
+        println!("{}", "Running script".yellow());
         let (code, output, error) = run_script::run(
             &*content,
             &args,
             &options,
         ).unwrap();
         println!("{}", output);
-        println!("Exit Code: {}", code);
+        match code {
+            0 => { println!("{}", "Success!".green()); }
+            _ => { println!("{}", format!("Failed to run the script! Exit code: {}", code)).bright_red(); }
+        }
 
         // run part
     }
