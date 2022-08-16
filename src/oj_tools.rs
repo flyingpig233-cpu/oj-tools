@@ -24,14 +24,12 @@ pub struct OJTools {
 
 impl OJTools {
     pub fn new(args: HelperCli) -> Self {
-        let config_path = match args.config_path {
+        let config_file = match args.config_file {
             Some(ref T) => { T.clone() }
-            None => { String::from("~/.config/oj_tools/config.toml") }
+            None => { String::from("~/.oj_tools/config.toml") }
         };
         let config = Config::builder()
-            .add_source(config::File::with_name(
-                config_path.as_str()
-            ))
+            .add_source(config::File::from(PathBuf::from(config_file).as_absolute_path().unwrap().as_ref()))
             .build()
             .unwrap()
             .try_deserialize::<HashMap<String, String>>()

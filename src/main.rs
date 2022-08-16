@@ -26,8 +26,8 @@ pub struct HelperCli {
     #[clap(subcommand)]
     action: Action,
 
-    #[clap(long, value_name = "CONFIG PATH")]
-    config_path: Option<String>,
+    #[clap(long, value_name = "CONFIG FILE")]
+    config_file: Option<String>,
 }
 
 fn main() {
