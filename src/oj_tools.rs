@@ -1,23 +1,28 @@
 use std::fs;
-use std::fs::{File, read_to_string};
-use std::io::{Read, stdout, Write};
+use std::fs::{read_to_string, File};
+use std::io::{stdout, Read, Write};
 use std::ops::Add;
 use std::path::{Path, PathBuf};
-use std::process::exit;
+use std::process::Command;
+use std::process::{exit, Output, Stdio};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
+use std::thread::sleep;
+use std::time::Duration;
 
 use arboard::Clipboard;
 use owo_colors::OwoColorize;
 use path_calculate::Calculate;
 use promptly::prompt_default;
 use run_script::run_script;
+use sysinfo::{Pid, PidExt, ProcessExt, SystemExt};
 
-use crate::{Action, HelperCli};
 use crate::config::{OJTConfig, ProblemConfig};
 use crate::lib::load_config_file;
 use crate::lib::prompt_run_status;
 use crate::lib::replace_template;
 use crate::oj_tools::oj_spider::LuoguTestData;
+use crate::{Action, HelperCli};
 
 #[path = "oj_spider/luogu_oj.rs"]
 mod oj_spider;
@@ -56,7 +61,7 @@ impl OJTools {
             }
         };
         let config_content =
-            fs::read_to_string(config_file.clone()).expect("Failed to read config file");
+            read_to_string(config_file.clone()).expect("Failed to read config file");
         let config = toml::from_str(config_content.as_str()).unwrap();
         Self {
             args,
@@ -123,7 +128,8 @@ impl OJTools {
                 }
                 println!("{}", file_content);
                 let mut clipboard = Clipboard::new().unwrap();
-                clipboard.set_text(file_content)
+                clipboard
+                    .set_text(file_content)
                     .expect("Failed to set system clipboard");
             }
         }
@@ -182,47 +188,73 @@ impl OJTools {
             .unwrap();
         if code != 0 {
             eprintln!("{}", error);
-            println!("{}", "CE".magenta());
+            println!("{}", "CE".bold().magenta());
             return;
         }
         let mut handles = vec![];
         for (i, (input_file, output_file)) in config.test_data.into_iter().enumerate() {
             handles.push(thread::spawn(move || {
                 let mut lock = stdout().lock();
-                writeln!(lock, "{}", format!("on test #{}", i + 1).cyan()).unwrap();
-                // run
-                let (code, _, error) =
-                    run_script!(format!(r#"./code < {} > {}"#, input_file, "out.txt").as_str())
-                        .unwrap();
 
-                if code != 0 {
-                    writeln!(lock, "{}", error).unwrap();
-                    writeln!(lock, "{}", "RE".purple()).unwrap();
-                    return;
+                // run
+                let input_file_content = read_to_string(input_file).unwrap();
+                let mut command = Command::new("./code")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                let (tx, rx): (Sender<Output>, Receiver<Output>) = channel();
+                let pid = Pid::from_u32(command.id());
+                if let Some(mut stdin) = command.stdin.take() {
+                    stdin.write_all(input_file_content.as_bytes()).unwrap();
                 }
 
-                // test data
-                let out_content = fs::read_to_string("out.txt").unwrap();
-                let answer = fs::read_to_string(output_file).unwrap();
-                let mut wa = false;
-                for diff in diff::lines(out_content.trim(), answer.trim()) {
-                    match diff {
-                        diff::Result::Left(_) => {
-                            wa = true;
+                thread::spawn(move || {
+                    tx.send(command.wait_with_output().unwrap()).unwrap();
+                });
+                let mut cpu_max_usage = 0f32;
+                let mut memory_max_usage = 0u64;
+                let mut s = sysinfo::System::new();
+                let mut count = 0;
+                write!(lock, "{}", format!("Test #{} ==> ", i + 1).bright_cyan()).unwrap();
+                loop {
+                    let res = rx.try_recv();
+                    if let Ok(output) = res {
+                        if !output.status.success() {
+                            writeln!(lock, "{}", String::from_utf8(output.stderr).unwrap())
+                                .unwrap();
+                            write!(lock, "{}", "RE".bold().purple()).unwrap();
+                            return;
+                        }
+
+                        // test data
+                        let out_content =
+                            String::from_utf8(output.stdout).unwrap().trim().to_string();
+                        let answer = read_to_string(output_file.clone())
+                            .unwrap()
+                            .trim()
+                            .to_string();
+                        if out_content.eq(&answer) {
+                            write!(lock, "{}", "AC".bold().green()).unwrap();
+                        } else {
+                            write!(lock, "{}", "WA".bold().red()).unwrap();
+                        }
+                        break;
+                    } else {
+                        if count > 500 {
+                            write!(lock, "{}", "TLE".purple()).unwrap();
                             break;
                         }
-                        diff::Result::Both(_, _) => {}
-                        diff::Result::Right(_) => {
-                            wa = true;
-                            break;
+                        s.refresh_process(pid);
+                        if let Some(process) = s.process(pid) {
+                            cpu_max_usage = process.cpu_usage().max(cpu_max_usage);
+                            memory_max_usage = process.virtual_memory().max(memory_max_usage);
                         }
+                        count += 1;
+                        sleep(Duration::from_micros(10));
                     }
                 }
-                if wa {
-                    writeln!(lock, "{}", "WA".red()).unwrap();
-                } else {
-                    writeln!(lock, "{}", "AC".green()).unwrap();
-                }
+                writeln!(lock, " ... {}MB", memory_max_usage as f32 / 1024.).unwrap();
             }));
         }
         for handle in handles {
@@ -289,7 +321,7 @@ impl OJTools {
             return;
         }
         println!("{:?}", script_path);
-        let template = fs::read_to_string(script_path).unwrap();
+        let template = read_to_string(script_path).unwrap();
         let content = replace_template(template, filepath);
         println!("{}", "Running script".yellow());
         let (code, output, error) = run_script!(content).unwrap();
