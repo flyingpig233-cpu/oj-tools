@@ -1,19 +1,22 @@
 use std::fs;
 use std::fs::File;
-use std::io::{BufRead, Read, stdin, stdout, Write};
+use std::io::{stdout, Read, Write};
 use std::ops::Add;
 use std::path::{Path, PathBuf};
 use std::process::exit;
+use std::thread;
 
 use owo_colors::OwoColorize;
 use path_calculate::Calculate;
-use run_script::{run_script, ScriptOptions};
+use run_script::run_script;
 
-use crate::{Action, HelperCli};
+use promptly::prompt_default;
+
 use crate::config::{OJTConfig, ProblemConfig};
 use crate::lib::prompt_run_status;
 use crate::lib::replace_template;
 use crate::oj_tools::oj_spider::LuoguTestData;
+use crate::{Action, HelperCli};
 
 #[path = "oj_spider/luogu_oj.rs"]
 mod oj_spider;
@@ -84,7 +87,7 @@ impl OJTools {
                 }
             }
 
-            Action::Generate { filename } => {
+            Action::Gen { filename } => {
                 let key = match self.config.template_path.clone() {
                     Some(key) => key,
                     None => {
@@ -107,6 +110,7 @@ impl OJTools {
                 }
                 self.pull_tests(pid.as_str(), &tests);
             }
+            Action::Config => {},
         }
     }
 
@@ -118,9 +122,9 @@ impl OJTools {
             let input_file_name = format!("in{}.txt", i + 1);
             let output_file_name = format!("out{}.txt", i + 1);
             problem_config.add(input_file_name.clone(), output_file_name.clone());
-            let mut in_file = fs::File::create(root_dir.join(PathBuf::from(input_file_name)))
+            let mut in_file = File::create(root_dir.join(PathBuf::from(input_file_name)))
                 .expect("Failed to create file");
-            let mut out_file = fs::File::create(root_dir.join(PathBuf::from(output_file_name)))
+            let mut out_file = File::create(root_dir.join(PathBuf::from(output_file_name)))
                 .expect("Failed to create file");
             in_file
                 .write(e.test_in.as_bytes())
@@ -147,7 +151,7 @@ impl OJTools {
         problem_config.code_path = "code.cpp".to_string();
         let config_content = toml::to_string(&problem_config).unwrap();
         let mut config_file =
-            fs::File::create(root_dir.join(PathBuf::from(".problem_config.toml"))).unwrap();
+            File::create(root_dir.join(PathBuf::from(".problem_config.toml"))).unwrap();
         config_file.write(config_content.as_bytes()).unwrap();
         println!("{}{}", "Success to pull tests from ".green(), pid.green());
     }
@@ -163,54 +167,59 @@ impl OJTools {
         }
         let config_content = fs::read_to_string(config_file_path).unwrap();
         let config: ProblemConfig = toml::from_str(config_content.as_str()).unwrap();
-        for (i, (input_file, output_file)) in config.test_data.iter().enumerate() {
-            println!("{}", format!("on test #{}", i + 1).cyan());
-            // build
-            let (code, _, error) = run_script!(format!(
-                "g++ code.cpp -o code {}",
-                self.config.test_option.clone().unwrap_or_default()
-            )
-            .as_str())
-                .unwrap();
-            if code != 0 {
-                eprintln!("{}", error);
-                println!("{}", "CE".magenta());
-                continue;
-            }
+        let (code, _, error) = run_script!(format!(
+            "g++ code.cpp -o code {}",
+            self.config.test_option.clone().unwrap_or_default()
+        )
+        .as_str())
+            .unwrap();
+        if code != 0 {
+            eprintln!("{}", error);
+            println!("{}", "CE".magenta());
+            return;
+        }
+        let mut handles = vec![];
+        for (i, (input_file, output_file)) in config.test_data.into_iter().enumerate() {
+            handles.push(thread::spawn(move || {
+                let mut lock = stdout().lock();
+                writeln!(lock, "{}", format!("on test #{}", i + 1).cyan()).unwrap();
+                // run
+                let (code, _, error) =
+                    run_script!(format!(r#"./code < {} > {}"#, input_file, "out.txt").as_str())
+                        .unwrap();
 
-            // run
-            let (code, _, error) =
-                run_script!(format!(r#"./code < {} > {}"#, input_file, "out.txt").as_str())
-                    .unwrap();
+                if code != 0 {
+                    writeln!(lock, "{}", error).unwrap();
+                    writeln!(lock, "{}", "RE".purple()).unwrap();
+                    return;
+                }
 
-            if code != 0 {
-                eprintln!("{}", error);
-                println!("{}", "RE".purple());
-                continue;
-            }
-
-            // test data
-            let out_content = fs::read_to_string("out.txt").unwrap();
-            let answer = fs::read_to_string(output_file).unwrap();
-            let mut wa = false;
-            for diff in diff::lines(out_content.trim(), answer.trim()) {
-                match diff {
-                    diff::Result::Left(_) => {
-                        wa = true;
-                        break;
-                    }
-                    diff::Result::Both(_, _) => {}
-                    diff::Result::Right(_) => {
-                        wa = true;
-                        break;
+                // test data
+                let out_content = fs::read_to_string("out.txt").unwrap();
+                let answer = fs::read_to_string(output_file).unwrap();
+                let mut wa = false;
+                for diff in diff::lines(out_content.trim(), answer.trim()) {
+                    match diff {
+                        diff::Result::Left(_) => {
+                            wa = true;
+                            break;
+                        }
+                        diff::Result::Both(_, _) => {}
+                        diff::Result::Right(_) => {
+                            wa = true;
+                            break;
+                        }
                     }
                 }
-            }
-            if wa {
-                println!("{}", "WA".red());
-            } else {
-                println!("{}", "AC".green());
-            }
+                if wa {
+                    writeln!(lock, "{}", "WA".red()).unwrap();
+                } else {
+                    writeln!(lock, "{}", "AC".green()).unwrap();
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
         }
     }
 
@@ -235,22 +244,17 @@ impl OJTools {
         let file_path = Path::new(filename.as_str());
 
         if file_path.exists() {
-            loop {
-                print!(
-                    "The file {} is already exists, do you want to overwrite it? (Yy/Nn)",
+            match prompt_default(
+                format!(
+                    "The file {} is already exists, do you want to overwrite it?",
                     filename
-                );
-                stdout().flush().expect("flush failed!");
-                let mut buff = String::new();
-                stdin().lock().read_line(&mut buff).unwrap();
-                match buff.trim().to_lowercase().as_str() {
-                    "y" => break,
-                    "n" => {
-                        return;
-                    }
-                    _ => {
-                        println!("Unknown input, please input again");
-                    }
+                )
+                    .as_str(),
+                false,
+            ) {
+                Ok(true) => {}
+                _ => {
+                    return;
                 }
             }
         }
@@ -280,10 +284,8 @@ impl OJTools {
         println!("{:?}", script_path);
         let template = fs::read_to_string(script_path).unwrap();
         let content = replace_template(template, filepath);
-        let options = ScriptOptions::new();
-        let args = vec![];
         println!("{}", "Running script".yellow());
-        let (code, output, error) = run_script::run(&*content, &args, &options).unwrap();
+        let (code, output, error) = run_script!(content).unwrap();
         prompt_run_status(code, output, error);
     }
 }

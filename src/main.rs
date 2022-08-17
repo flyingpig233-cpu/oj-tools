@@ -8,19 +8,29 @@ mod oj_tools;
 
 #[derive(Subcommand)]
 pub enum Action {
+    /// Test code
     Test,
+
+    /// Run code
     Run {
         #[clap()]
         filename: String,
     },
-    Generate {
+
+    /// Generate code from the template
+    Gen {
         #[clap()]
         filename: String,
     },
+
+    /// Pull tests from OJs
     Pull {
         #[clap()]
         pid: String,
     },
+
+    /// Config oj_tools
+    Config,
 }
 
 #[derive(Parser)]
