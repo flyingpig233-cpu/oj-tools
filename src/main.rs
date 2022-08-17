@@ -1,13 +1,12 @@
-use std::path::PathBuf;
-
 use clap::{Parser, Subcommand};
 
-use crate::oj_tools::{OJTools, OJType};
+use crate::oj_tools::OJTools;
 
+mod config;
 mod lib;
 mod oj_tools;
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand)]
 pub enum Action {
     Test,
     Run {
@@ -18,9 +17,13 @@ pub enum Action {
         #[clap()]
         filename: String,
     },
+    Pull {
+        #[clap()]
+        pid: String,
+    },
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 pub struct HelperCli {
     #[clap(subcommand)]

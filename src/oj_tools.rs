@@ -1,48 +1,72 @@
-use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::{BufRead, Read, stdin, stdout, Write};
+use std::ops::Add;
 use std::path::{Path, PathBuf};
+use std::process::exit;
 
-use config::Config;
 use owo_colors::OwoColorize;
 use path_calculate::Calculate;
-use run_script::ScriptOptions;
-
-use oj_tools::replace_template;
+use run_script::{run_script, ScriptOptions};
 
 use crate::{Action, HelperCli};
+use crate::config::{OJTConfig, ProblemConfig};
+use crate::lib::prompt_run_status;
+use crate::lib::replace_template;
+use crate::oj_tools::oj_spider::LuoguTestData;
 
-pub enum OJType {
-    Luogu,
-}
+#[path = "oj_spider/luogu_oj.rs"]
+mod oj_spider;
+
+pub static DEFAULT_CONFIG_DIR: &'static str = "~/.oj_tools/";
+pub static DEFAULT_CONFIG_FILE_NAME: &'static str = "config.toml";
 
 pub struct OJTools {
     args: HelperCli,
-    config: HashMap<String, String>,
+    config: OJTConfig,
+    config_file: PathBuf,
 }
 
 impl OJTools {
     pub fn new(args: HelperCli) -> Self {
+        let config_dir = PathBuf::from(DEFAULT_CONFIG_DIR);
+        let abs_config_dir = config_dir.as_absolute_path().unwrap();
         let config_file = match args.config_file {
-            Some(ref T) => { T.clone() }
-            None => { String::from("~/.oj_tools/config.toml") }
+            Some(ref file) => {
+                let path = PathBuf::from(file.clone());
+                if !path.exists() {
+                    eprintln!(
+                        "{}",
+                        format!("The config file {} does not exist!", file).red()
+                    );
+                    exit(0);
+                }
+                path
+            }
+            None => {
+                if !abs_config_dir.exists() {
+                    fs::create_dir_all(DEFAULT_CONFIG_DIR)
+                        .expect("failed to create config directory");
+                }
+                abs_config_dir.join(PathBuf::from(DEFAULT_CONFIG_FILE_NAME))
+            }
         };
-        let config = Config::builder()
-            .add_source(config::File::from(PathBuf::from(config_file).as_absolute_path().unwrap().as_ref()))
-            .build()
-            .unwrap()
-            .try_deserialize::<HashMap<String, String>>()
-            .unwrap();
-        Self { args, config }
+        let config_content =
+            fs::read_to_string(config_file.clone()).expect("Failed to read config file");
+        let config = toml::from_str(config_content.as_str()).unwrap();
+        Self {
+            args,
+            config_file,
+            config,
+        }
     }
 
     pub fn run(&self) {
         match &self.args.action {
             Action::Test => self.run_test(),
             Action::Run { filename } => {
-                let key = match self.config.get("script_path") {
-                    Some(T) => T,
+                let key = match self.config.script_path.clone() {
+                    Some(key) => key,
                     None => {
                         println!(
                             "It seems that you are not set script_path!\
@@ -51,13 +75,18 @@ impl OJTools {
                         return;
                     }
                 };
-                let script_path = Path::new(key).as_absolute_path().unwrap();
-                self.run_code(Path::new(filename), script_path.as_ref());
+                let script_path = PathBuf::from(key);
+                if !script_path.is_absolute() {
+                    let config_root = self.config_file.parent().unwrap();
+                    self.run_code(Path::new(filename), config_root.join(script_path).as_path());
+                } else {
+                    self.run_code(Path::new(filename), script_path.as_path());
+                }
             }
 
             Action::Generate { filename } => {
-                let key = match self.config.get("template_path") {
-                    Some(T) => T,
+                let key = match self.config.template_path.clone() {
+                    Some(key) => key,
                     None => {
                         println!(
                             "It seems that you are not set template_path!\
@@ -66,15 +95,126 @@ impl OJTools {
                         return;
                     }
                 };
-                let template_path = Path::new(key).as_absolute_path().unwrap();
+                let template_path = Path::new(key.as_str()).as_absolute_path().unwrap();
                 self.gen_code(template_path.as_ref(), filename.clone());
+            }
+            Action::Pull { pid } => {
+                let pid = pid.to_uppercase();
+                let tests = oj_spider::get_luogu_test_data(pid.as_str());
+                if tests.is_empty() {
+                    eprintln!("{}", "Failed to pull tests! Please check the PID is right");
+                    exit(1);
+                }
+                self.pull_tests(pid.as_str(), &tests);
             }
         }
     }
 
-    fn run_test(&self) {}
+    fn pull_tests(&self, pid: &str, test_data: &Vec<LuoguTestData>) {
+        fs::create_dir(pid).expect("Failed to create directory");
+        let root_dir = PathBuf::from(pid);
+        let mut problem_config = ProblemConfig::new(vec![]);
+        for (i, e) in test_data.iter().enumerate() {
+            let input_file_name = format!("in{}.txt", i + 1);
+            let output_file_name = format!("out{}.txt", i + 1);
+            problem_config.add(input_file_name.clone(), output_file_name.clone());
+            let mut in_file = fs::File::create(root_dir.join(PathBuf::from(input_file_name)))
+                .expect("Failed to create file");
+            let mut out_file = fs::File::create(root_dir.join(PathBuf::from(output_file_name)))
+                .expect("Failed to create file");
+            in_file
+                .write(e.test_in.as_bytes())
+                .expect("Failed to write file");
+            out_file
+                .write(e.test_out.as_bytes())
+                .expect("Failed to write file");
+        }
+        let key = match self.config.template_path.clone() {
+            Some(key) => key,
+            None => {
+                println!(
+                    "It seems that you are not set template_path!\
+                        You should setup a default script, \ntry to run \"oj_tools config\""
+                );
+                return;
+            }
+        };
+        let code_path = format!("{}/{}", pid, "code.cpp");
+        self.gen_code(
+            Path::new(key.as_str()).as_absolute_path().unwrap().as_ref(),
+            code_path,
+        );
+        problem_config.code_path = "code.cpp".to_string();
+        let config_content = toml::to_string(&problem_config).unwrap();
+        let mut config_file =
+            fs::File::create(root_dir.join(PathBuf::from(".problem_config.toml"))).unwrap();
+        config_file.write(config_content.as_bytes()).unwrap();
+        println!("{}{}", "Success to pull tests from ".green(), pid.green());
+    }
 
-    fn gen_code(&self, template_path: &Path, filename: String) {
+    fn run_test(&self) {
+        let config_file_path = PathBuf::from(".problem_config.toml");
+        if !config_file_path.exists() {
+            eprintln!(
+                "{}",
+                "You should run `oi_tools pull #PID` first! There are not any config file".red()
+            );
+            exit(1);
+        }
+        let config_content = fs::read_to_string(config_file_path).unwrap();
+        let config: ProblemConfig = toml::from_str(config_content.as_str()).unwrap();
+        for (i, (input_file, output_file)) in config.test_data.iter().enumerate() {
+            println!("{}", format!("on test #{}", i + 1).cyan());
+            // build
+            let (code, _, error) = run_script!(format!(
+                "g++ code.cpp -o code {}",
+                self.config.test_option.clone().unwrap_or_default()
+            )
+            .as_str())
+                .unwrap();
+            if code != 0 {
+                eprintln!("{}", error);
+                println!("{}", "CE".magenta());
+                continue;
+            }
+
+            // run
+            let (code, _, error) =
+                run_script!(format!(r#"./code < {} > {}"#, input_file, "out.txt").as_str())
+                    .unwrap();
+
+            if code != 0 {
+                eprintln!("{}", error);
+                println!("{}", "RE".purple());
+                continue;
+            }
+
+            // test data
+            let out_content = fs::read_to_string("out.txt").unwrap();
+            let answer = fs::read_to_string(output_file).unwrap();
+            let mut wa = false;
+            for diff in diff::lines(out_content.trim(), answer.trim()) {
+                match diff {
+                    diff::Result::Left(_) => {
+                        wa = true;
+                        break;
+                    }
+                    diff::Result::Both(_, _) => {}
+                    diff::Result::Right(_) => {
+                        wa = true;
+                        break;
+                    }
+                }
+            }
+            if wa {
+                println!("{}", "WA".red());
+            } else {
+                println!("{}", "AC".green());
+            }
+        }
+    }
+
+    fn gen_code(&self, template_path: &Path, mut filename: String) {
         if !template_path.exists() {
             println!(
                 "{}",
@@ -86,8 +226,14 @@ impl OJTools {
             );
             return;
         }
+        // If the input has no extension, it will automatically add .cpp
+        if let None = filename.find(".") {
+            filename = filename.add(".cpp");
+        }
+
         let mut template = String::new();
         let file_path = Path::new(filename.as_str());
+
         if file_path.exists() {
             loop {
                 print!(
@@ -124,34 +270,20 @@ impl OJTools {
     }
 
     fn run_code(&self, filepath: &Path, script_path: &Path) {
-        let mut template = String::new();
         if !filepath.exists() {
-            println!(
+            eprintln!(
                 "{}",
                 format!("File {} does not exist", filepath.to_str().unwrap()).red()
             );
             return;
         }
-        fs::File::open(script_path)
-            .unwrap()
-            .read_to_string(&mut template)
-            .unwrap();
+        println!("{:?}", script_path);
+        let template = fs::read_to_string(script_path).unwrap();
         let content = replace_template(template, filepath);
         let options = ScriptOptions::new();
         let args = vec![];
         println!("{}", "Running script".yellow());
-        let (code, output, _) = run_script::run(&*content, &args, &options).unwrap();
-        print!("{}", output);
-        match code {
-            0 => {
-                println!("{}", "Success!".green());
-            }
-            _ => {
-                println!(
-                    "{}",
-                    format!("Failed to run the script! Exit code: {}", code).bright_red()
-                )
-            }
-        }
+        let (code, output, error) = run_script::run(&*content, &args, &options).unwrap();
+        prompt_run_status(code, output, error);
     }
 }
