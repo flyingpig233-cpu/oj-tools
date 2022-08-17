@@ -31,6 +31,12 @@ pub enum Action {
 
     /// Config oj_tools
     Config,
+
+    /// Copy problem file to clipboard
+    Copy {
+        #[clap(default_value_t = String::new())]
+        filename: String,
+    },
 }
 
 #[derive(Parser)]

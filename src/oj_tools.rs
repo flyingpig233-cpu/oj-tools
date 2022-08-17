@@ -1,22 +1,23 @@
 use std::fs;
-use std::fs::File;
-use std::io::{stdout, Read, Write};
+use std::fs::{File, read_to_string};
+use std::io::{Read, stdout, Write};
 use std::ops::Add;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::thread;
 
+use arboard::Clipboard;
 use owo_colors::OwoColorize;
 use path_calculate::Calculate;
+use promptly::prompt_default;
 use run_script::run_script;
 
-use promptly::prompt_default;
-
+use crate::{Action, HelperCli};
 use crate::config::{OJTConfig, ProblemConfig};
+use crate::lib::load_config_file;
 use crate::lib::prompt_run_status;
 use crate::lib::replace_template;
 use crate::oj_tools::oj_spider::LuoguTestData;
-use crate::{Action, HelperCli};
 
 #[path = "oj_spider/luogu_oj.rs"]
 mod oj_spider;
@@ -110,7 +111,21 @@ impl OJTools {
                 }
                 self.pull_tests(pid.as_str(), &tests);
             }
-            Action::Config => {},
+            Action::Config => {}
+            Action::Copy { filename } => {
+                let file_content: String;
+                if filename.is_empty() {
+                    let config_content = load_config_file().unwrap();
+                    let config: ProblemConfig = toml::from_str(config_content.as_str()).unwrap();
+                    file_content = read_to_string(config.code_path).unwrap();
+                } else {
+                    file_content = read_to_string(filename).unwrap();
+                }
+                println!("{}", file_content);
+                let mut clipboard = Clipboard::new().unwrap();
+                clipboard.set_text(file_content)
+                    .expect("Failed to set system clipboard");
+            }
         }
     }
 
@@ -157,15 +172,7 @@ impl OJTools {
     }
 
     fn run_test(&self) {
-        let config_file_path = PathBuf::from(".problem_config.toml");
-        if !config_file_path.exists() {
-            eprintln!(
-                "{}",
-                "You should run `oi_tools pull #PID` first! There are not any config file".red()
-            );
-            exit(1);
-        }
-        let config_content = fs::read_to_string(config_file_path).unwrap();
+        let config_content = load_config_file().unwrap();
         let config: ProblemConfig = toml::from_str(config_content.as_str()).unwrap();
         let (code, _, error) = run_script!(format!(
             "g++ code.cpp -o code {}",
