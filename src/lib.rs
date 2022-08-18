@@ -39,18 +39,21 @@ pub fn load_config_file() -> io::Result<String> {
     fs::read_to_string(config_file_path)
 }
 
-pub fn prompt_run_status(code: i32, output: String, error: String) {
+pub fn prompt_run_status(
+    code: i32,
+    output: String,
+    error: String,
+    success_msg: &str,
+    error_msg: &str,
+) {
     match code {
         0 => {
             print!("{}", output);
-            println!("{}", "Success!".green());
+            println!("{}", success_msg.green());
         }
         _ => {
             eprintln!("{}", format!("{:?}", error).bright_red());
-            eprintln!(
-                "{}",
-                format!("Failed to run the script! Exit code: {}", code).bright_red()
-            );
+            eprintln!("{}", error_msg.bright_red());
         }
     }
 }

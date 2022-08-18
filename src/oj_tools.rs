@@ -74,23 +74,18 @@ impl OJTools {
         match &self.args.action {
             Action::Test => self.run_test(),
             Action::Run { filename } => {
-                let key = match self.config.script_path.clone() {
-                    Some(key) => key,
-                    None => {
-                        println!(
-                            "It seems that you are not set script_path!\
-                        You should setup a default script, \ntry to run \"oj_tools config\""
-                        );
-                        return;
-                    }
-                };
-                let script_path = PathBuf::from(key);
-                if !script_path.is_absolute() {
-                    let config_root = self.config_file.parent().unwrap();
-                    self.run_code(Path::new(filename), config_root.join(script_path).as_path());
+                let file_path;
+                if filename.is_empty() {
+                    let config_content = load_config_file().unwrap();
+                    let config: ProblemConfig = toml::from_str(config_content.as_str()).unwrap();
+                    file_path = PathBuf::from(config.code_path.as_str());
                 } else {
-                    self.run_code(Path::new(filename), script_path.as_path());
+                    file_path = PathBuf::from(filename);
                 }
+                self.run_code(
+                    file_path.as_path(),
+                    self.config.run_option.clone().unwrap_or_default(),
+                );
             }
 
             Action::Gen { filename } => {
@@ -136,7 +131,10 @@ impl OJTools {
     }
 
     fn pull_tests(&self, pid: &str, test_data: &Vec<LuoguTestData>) {
-        fs::create_dir(pid).expect("Failed to create directory");
+        if let Err(_) = fs::create_dir(pid) {
+            eprintln!("{}", format!("failed to create {} directory, please check if there is a directory or file with the same name", pid).red());
+            exit(1);
+        }
         let root_dir = PathBuf::from(pid);
         let mut problem_config = ProblemConfig::new(vec![]);
         for (i, e) in test_data.iter().enumerate() {
@@ -180,12 +178,12 @@ impl OJTools {
     fn run_test(&self) {
         let config_content = load_config_file().unwrap();
         let config: ProblemConfig = toml::from_str(config_content.as_str()).unwrap();
-        let (code, _, error) = run_script!(format!(
+        let script_content = format!(
             "g++ code.cpp -o code {}",
             self.config.test_option.clone().unwrap_or_default()
-        )
-        .as_str())
-            .unwrap();
+        );
+        println!("{}", script_content);
+        let (code, _, error) = run_script!(script_content.as_str()).unwrap();
         if code != 0 {
             eprintln!("{}", error);
             println!("{}", "CE".bold().magenta());
@@ -212,9 +210,9 @@ impl OJTools {
                 thread::spawn(move || {
                     tx.send(command.wait_with_output().unwrap()).unwrap();
                 });
-                let mut cpu_max_usage = 0f32;
-                let mut memory_max_usage = 0u64;
                 let mut s = sysinfo::System::new();
+                s.refresh_process(pid);
+                let mut memory_max_usage = s.process(pid).unwrap().memory();
                 let mut count = 0;
                 write!(lock, "{}", format!("Test #{} ==> ", i + 1).bright_cyan()).unwrap();
                 loop {
@@ -236,25 +234,35 @@ impl OJTools {
                             .to_string();
                         if out_content.eq(&answer) {
                             write!(lock, "{}", "AC".bold().green()).unwrap();
+                            writeln!(lock, " ... {:.3}MB", memory_max_usage as f32 / 1024.)
+                                .unwrap();
                         } else {
                             write!(lock, "{}", "WA".bold().red()).unwrap();
+                            writeln!(lock, " ... {:.3}MB", memory_max_usage as f32 / 1024.)
+                                .unwrap();
+                            prettydiff::diff_lines(out_content.as_str(), answer.as_str())
+                                .names("Your answer", "Answer")
+                                .set_show_lines(true)
+                                .set_diff_only(false)
+                                .set_align_new_lines(true)
+                                .prettytable();
                         }
                         break;
                     } else {
                         if count > 500 {
                             write!(lock, "{}", "TLE".purple()).unwrap();
+                            writeln!(lock, " ... {:.3}MB", memory_max_usage as f32 / 1024.)
+                                .unwrap();
                             break;
                         }
                         s.refresh_process(pid);
                         if let Some(process) = s.process(pid) {
-                            cpu_max_usage = process.cpu_usage().max(cpu_max_usage);
-                            memory_max_usage = process.virtual_memory().max(memory_max_usage);
+                            memory_max_usage = process.memory().max(memory_max_usage);
                         }
                         count += 1;
                         sleep(Duration::from_micros(10));
                     }
                 }
-                writeln!(lock, " ... {}MB", memory_max_usage as f32 / 1024.).unwrap();
             }));
         }
         for handle in handles {
@@ -312,7 +320,8 @@ impl OJTools {
         );
     }
 
-    fn run_code(&self, filepath: &Path, script_path: &Path) {
+    fn run_code(&self, filepath: &Path, compiler_option: String) {
+        println!("{:?}", filepath);
         if !filepath.exists() {
             eprintln!(
                 "{}",
@@ -320,11 +329,31 @@ impl OJTools {
             );
             return;
         }
-        println!("{:?}", script_path);
-        let template = read_to_string(script_path).unwrap();
-        let content = replace_template(template, filepath);
-        println!("{}", "Running script".yellow());
-        let (code, output, error) = run_script!(content).unwrap();
-        prompt_run_status(code, output, error);
+        let compiler;
+        if let Some(ref cc) = self.config.cc {
+            compiler = cc.clone();
+        } else {
+            compiler = "g++".to_string();
+        }
+        let fullname = filepath.to_str().unwrap();
+        let name_without_ext = filepath.file_stem().unwrap().to_str().unwrap();
+        let (code, output, error) = run_script!(format!(
+            "{} {} -o {} {}",
+            compiler, fullname, name_without_ext, compiler_option
+        ))
+            .unwrap();
+        prompt_run_status(
+            code,
+            output,
+            error,
+            "Compile successfully",
+            "Failed to build",
+        );
+
+        if let Err(_) = Command::new(format!("./{}", name_without_ext)).status() {
+            eprintln!("{}", format!("Runtime error occurred. ").bold().red());
+            exit(1);
+        }
+        println!("{}", "Execution successful!".bold().green());
     }
 }

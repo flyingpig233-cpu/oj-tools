@@ -3,8 +3,9 @@ use serde_derive::{Deserialize, Serialize};
 #[derive(Deserialize, Serialize)]
 pub struct OJTConfig {
     pub template_path: Option<String>,
-    pub script_path: Option<String>,
+    pub run_option: Option<String>,
     pub test_option: Option<String>,
+    pub cc: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]

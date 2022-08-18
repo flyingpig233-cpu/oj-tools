@@ -13,7 +13,7 @@ pub enum Action {
 
     /// Run code
     Run {
-        #[clap()]
+        #[clap(default_value_t = String::new())]
         filename: String,
     },
 

@@ -14,7 +14,6 @@ clap = { version = "3.2.17", features = ["derive"] }
 reqwest = { version = "0.11", features = ["json", "blocking"] }
 tokio = { version = "1", features = ["full"] }
 run_script = "0.10.0"
-config = "0.13.2"
 dirs = "4.0.0"
 owo-colors = "3.4.0"
 chrono = "0.4.22"
@@ -23,11 +22,17 @@ lazy_static = "1.4.0"
 relative-path = "1.7.2"
 promptly = "0.3.1"
 regex = "1.6.0"
-prettydiff = "0.6.1"
 toml = "0.5.9"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 serde_derive = "1.0.143"
 diff = "0.1.13"
 arboard = "2.1.1"
 sysinfo = "0.25.2"
+prettydiff = "0.6.1"
+
+[profile.release]
+strip = true
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
