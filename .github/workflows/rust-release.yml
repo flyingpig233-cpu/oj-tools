@@ -26,5 +26,5 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/release/alemanes
           asset_name: alemanes-linux-amd64
-          tag: ${{ steps.bump_version.outputs.new_tag }}
+          tag: v0.10
           overwrite: true
