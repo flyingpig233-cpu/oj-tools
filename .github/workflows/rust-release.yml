@@ -1,49 +1,30 @@
-name: Release
-
-permissions:
-  contents: write
+name: Build, bump tag version and release
 
 on:
   push:
-    tags:
-      - v0.1
+    branches:
+      - main
 
 jobs:
-  create-release:
+  release:
+    name: Build and Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: taiki-e/create-gh-release-action@v1
-        with:
-          # (optional) Path to changelog.
-          changelog: CHANGELOG.md
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Build project
+        run: cargo build --release --locked
+      - name: Bump version and push tag/create release point
+        uses: anothrNick/github-tag-action@1.17.2
         env:
-          # (required) GitHub token for creating GitHub Releases.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  upload-assets:
-    strategy:
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v3
-      - uses: taiki-e/upload-rust-binary-action@v1
+          WITH_V: true
+        id: bump_version
+      - name: Upload binary to release
+        uses: svenstaro/upload-release-action@v1-release
         with:
-          # (required) Comma-separated list of binary names (non-extension portion of filename) to build and upload.
-          # Note that glob pattern is not supported yet.
-          bin: ...
-          # (optional) On which platform to distribute the `.tar.gz` file.
-          # [default value: unix]
-          # [possible values: all, unix, windows, none]
-          tar: unix
-          # (optional) On which platform to distribute the `.zip` file.
-          # [default value: windows]
-          # [possible values: all, unix, windows, none]
-          zip: windows
-        env:
-          # (required) GitHub token for uploading assets to GitHub Releases.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/release/alemanes
+          asset_name: alemanes-linux-amd64
+          tag: ${{ steps.bump_version.outputs.new_tag }}
+          overwrite: true
