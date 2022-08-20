@@ -7,8 +7,6 @@ use std::process::Command;
 use std::process::{exit, Output, Stdio};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
-use std::thread::sleep;
-use std::time::Duration;
 
 use arboard::Clipboard;
 use owo_colors::OwoColorize;
@@ -33,7 +31,6 @@ pub static DEFAULT_CONFIG_FILE_NAME: &'static str = "config.toml";
 pub struct OJTools {
     args: HelperCli,
     config: OJTConfig,
-    config_file: PathBuf,
 }
 
 impl OJTools {
@@ -63,11 +60,7 @@ impl OJTools {
         let config_content =
             read_to_string(config_file.clone()).expect("Failed to read config file");
         let config = toml::from_str(config_content.as_str()).unwrap();
-        Self {
-            args,
-            config_file,
-            config,
-        }
+        Self { args, config }
     }
 
     pub fn run(&self) {
@@ -249,7 +242,7 @@ impl OJTools {
                         }
                         break;
                     } else {
-                        if count > 500 {
+                        if count > 5000 {
                             write!(lock, "{}", "TLE".purple()).unwrap();
                             writeln!(lock, " ... {:.3}MB", memory_max_usage as f32 / 1024.)
                                 .unwrap();
@@ -260,7 +253,6 @@ impl OJTools {
                             memory_max_usage = process.memory().max(memory_max_usage);
                         }
                         count += 1;
-                        sleep(Duration::from_micros(10));
                     }
                 }
             }));
@@ -321,7 +313,6 @@ impl OJTools {
     }
 
     fn run_code(&self, filepath: &Path, compiler_option: String) {
-        println!("{:?}", filepath);
         if !filepath.exists() {
             eprintln!(
                 "{}",
@@ -337,11 +328,11 @@ impl OJTools {
         }
         let fullname = filepath.to_str().unwrap();
         let name_without_ext = filepath.file_stem().unwrap().to_str().unwrap();
-        let (code, output, error) = run_script!(format!(
+        let command = format!(
             "{} {} -o {} {}",
             compiler, fullname, name_without_ext, compiler_option
-        ))
-            .unwrap();
+        );
+        let (code, output, error) = run_script!(command).unwrap();
         prompt_run_status(
             code,
             output,
@@ -354,6 +345,6 @@ impl OJTools {
             eprintln!("{}", format!("Runtime error occurred. ").bold().red());
             exit(1);
         }
-        println!("{}", "Execution successful!".bold().green());
+        println!("{}", "Execution successful!".green());
     }
 }

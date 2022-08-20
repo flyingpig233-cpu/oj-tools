@@ -52,8 +52,9 @@ pub fn prompt_run_status(
             println!("{}", success_msg.green());
         }
         _ => {
-            eprintln!("{}", format!("{:?}", error).bright_red());
+            eprintln!("{}", format!("{}", error).bright_red());
             eprintln!("{}", error_msg.bright_red());
+            exit(1);
         }
     }
 }
