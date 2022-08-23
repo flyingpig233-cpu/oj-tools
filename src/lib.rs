@@ -6,7 +6,7 @@ use chrono::Datelike;
 use owo_colors::OwoColorize;
 use tokio::io;
 
-pub fn replace_template(template: String, filepath: &Path) -> String {
+pub fn replace_template(template: String, filepath: &Path, author_name: String) -> String {
     let time = chrono::offset::Local::now();
     template
         .replace(
@@ -18,7 +18,7 @@ pub fn replace_template(template: String, filepath: &Path) -> String {
         .replace("$year$", time.date().year().to_string().as_str())
         .replace("$month$", time.date().month().to_string().as_str())
         .replace("$day$", time.date().day().to_string().as_str())
-        .replace("$author$", "shit")
+        .replace("$author$", author_name.as_str())
 }
 
 pub fn get_resources(url: &str) -> String {

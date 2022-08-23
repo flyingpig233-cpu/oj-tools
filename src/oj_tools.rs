@@ -215,6 +215,8 @@ impl OJTools {
                             writeln!(lock, "{}", String::from_utf8(output.stderr).unwrap())
                                 .unwrap();
                             write!(lock, "{}", "RE".bold().purple()).unwrap();
+                            writeln!(lock, " ... {:.3}MB", memory_max_usage as f32 / 1024.)
+                                .unwrap();
                             return;
                         }
 
@@ -242,7 +244,7 @@ impl OJTools {
                         }
                         break;
                     } else {
-                        if count > 5000 {
+                        if count > 50000 {
                             write!(lock, "{}", "TLE".purple()).unwrap();
                             writeln!(lock, " ... {:.3}MB", memory_max_usage as f32 / 1024.)
                                 .unwrap();
@@ -303,7 +305,7 @@ impl OJTools {
             .unwrap()
             .read_to_string(&mut template)
             .unwrap();
-        let content = replace_template(template, file_path);
+        let content = replace_template(template, file_path, self.config.author_name.clone().unwrap_or_default());
         file.write(content.as_bytes())
             .expect("Error while writing to file");
         println!(
@@ -332,12 +334,13 @@ impl OJTools {
             "{} {} -o {} {}",
             compiler, fullname, name_without_ext, compiler_option
         );
+        println!("{}", format!("{}", command).bright_cyan());
         let (code, output, error) = run_script!(command).unwrap();
         prompt_run_status(
             code,
             output,
             error,
-            "Compile successfully",
+            "Compile success",
             "Failed to build",
         );
 
@@ -345,6 +348,6 @@ impl OJTools {
             eprintln!("{}", format!("Runtime error occurred. ").bold().red());
             exit(1);
         }
-        println!("{}", "Execution successful!".green());
+        println!("{}", "Successful execution".green());
     }
 }

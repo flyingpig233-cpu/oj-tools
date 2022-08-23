@@ -6,6 +6,7 @@ pub struct OJTConfig {
     pub run_option: Option<String>,
     pub test_option: Option<String>,
     pub cc: Option<String>,
+    pub author_name: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
