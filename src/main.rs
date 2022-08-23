@@ -1,7 +1,5 @@
 use clap::{Parser, Subcommand};
 
-use crate::oj_tools::OJTools;
-
 mod config;
 mod lib;
 mod oj_tools;
@@ -51,6 +49,6 @@ pub struct HelperCli {
 
 fn main() {
     let args = HelperCli::parse();
-    let app = OJTools::new(args);
+    let app = oj_tools::OJTools::new(args);
     app.run();
 }
